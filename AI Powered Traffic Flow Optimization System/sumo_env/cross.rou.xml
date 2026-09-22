@@ -1,0 +1,15 @@
+<routes>
+    <vType id="car" accel="2.6" decel="4.5" length="4.5" maxSpeed="14.0"/>
+    <vType id="truck" accel="1.2" decel="3.5" length="10.0" maxSpeed="10.0"/>
+
+    <route id="r_NS" edges="N2C C2S"/>
+    <route id="r_SN" edges="S2C C2N"/>
+    <route id="r_EW" edges="E2C C2W"/>
+    <route id="r_WE" edges="W2C C2E"/>
+
+    <!-- Asymmetric demand to demonstrate adaptive balancing -->
+    <flow id="flow_NS" type="car" route="r_NS" begin="0" end="1000" period="3"/>
+    <flow id="flow_SN" type="car" route="r_SN" begin="0" end="1000" period="4"/>
+    <flow id="flow_EW" type="car" route="r_EW" begin="0" end="1000" period="10"/>
+    <flow id="flow_WE" type="truck" route="r_WE" begin="0" end="1000" period="12"/>
+</routes>
