@@ -5,3 +5,4 @@ traci>=1.19.0
 sumolib>=1.19.0
 matplotlib>=3.7.0
 torch>=2.0.0
+lapx>=0.5.5

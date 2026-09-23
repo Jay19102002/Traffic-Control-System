@@ -48,13 +48,20 @@ class TrafficVisionEngine:
         frame_h, frame_w = frame.shape[:2]
         current_rois = self._get_scaled_rois(frame_w, frame_h)
 
-        results = self.model.track(
-            source=frame,
-            persist=True,
-            classes=self.target_classes,
-            tracker="bytetrack.yaml",
-            verbose=False
-        )
+        try:
+            results = self.model.track(
+                source=frame,
+                persist=True,
+                classes=self.target_classes,
+                tracker="bytetrack.yaml",
+                verbose=False
+            )
+        except Exception:
+            results = self.model.predict(
+                source=frame,
+                classes=self.target_classes,
+                verbose=False
+            )
 
         lane_data = {lane: {"vehicles": [], "pce_load": 0.0, "count": 0} for lane in current_rois}
         annotated_frame = frame.copy()

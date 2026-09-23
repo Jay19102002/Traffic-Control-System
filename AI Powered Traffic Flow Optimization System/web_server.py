@@ -42,10 +42,23 @@ class VideoStreamThread(threading.Thread):
         if self.source == "demo":
             sim = SyntheticTrafficGenerator(width=1280, height=720)
             cap = None
+            print("[INFO] Running in synthetic traffic simulation demo mode.")
         else:
-            sim = None
-            src = int(self.source) if self.source.isdigit() else self.source
-            cap = cv2.VideoCapture(src)
+            src = int(self.source) if str(self.source).isdigit() else self.source
+            if isinstance(src, int):
+                cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+                if not cap.isOpened():
+                    cap = cv2.VideoCapture(src)
+            else:
+                cap = cv2.VideoCapture(src)
+
+            if not cap.isOpened():
+                print(f"[WARN] Camera/source '{self.source}' not accessible. Falling back to synthetic traffic demo.")
+                sim = SyntheticTrafficGenerator(width=1280, height=720)
+                cap = None
+            else:
+                sim = None
+                print(f"[INFO] Successfully connected to live camera (index/source: {self.source}).")
 
         current_phase = "NS_PHASE"
         is_yellow = False
@@ -63,6 +76,7 @@ class VideoStreamThread(threading.Thread):
             elif cap is not None and cap.isOpened():
                 ret, frame = cap.read()
                 if not ret:
+                    time.sleep(0.01)
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     continue
             else:
@@ -441,6 +455,119 @@ HTML_PAGE = """<!DOCTYPE html>
             border-color: var(--cyan-neon);
             color: var(--cyan-neon);
         }
+
+        /* Responsive Breakpoints */
+        @media (max-width: 1024px) {
+            main {
+                grid-template-columns: 1fr;
+                padding: 20px;
+                gap: 20px;
+            }
+
+            .side-dashboard {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 16px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            header {
+                flex-direction: column;
+                align-items: flex-start;
+                padding: 14px 16px;
+                gap: 12px;
+            }
+
+            .header-badges {
+                width: 100%;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .badge {
+                font-size: 0.75rem;
+                padding: 5px 12px;
+            }
+
+            main {
+                padding: 14px;
+                gap: 14px;
+            }
+
+            .side-dashboard {
+                display: flex;
+                flex-direction: column;
+                gap: 14px;
+            }
+
+            .glass-card {
+                padding: 16px;
+                border-radius: 12px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .brand-title {
+                font-size: 1.1rem;
+            }
+
+            .brand-sub {
+                font-size: 0.7rem;
+            }
+
+            .header-badges {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 6px;
+            }
+
+            .header-badges .badge:last-child {
+                grid-column: span 2;
+                justify-content: center;
+            }
+
+            .badge {
+                justify-content: center;
+                text-align: center;
+                font-size: 0.72rem;
+                padding: 5px 8px;
+            }
+
+            .signal-grid {
+                gap: 8px;
+            }
+
+            .signal-box {
+                padding: 10px 8px;
+            }
+
+            .signal-sec {
+                font-size: 1.25rem;
+            }
+
+            .kpi-row {
+                gap: 8px;
+            }
+
+            .kpi-card {
+                padding: 10px 8px;
+            }
+
+            .kpi-val {
+                font-size: 1.15rem;
+            }
+
+            .controls-row {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .btn {
+                padding: 12px;
+                font-size: 0.82rem;
+            }
+        }
     </style>
 </head>
 <body>
@@ -604,8 +731,22 @@ HTML_PAGE = """<!DOCTYPE html>
 
 class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
     daemon_threads = True
+    allow_reuse_address = True
+
+    def handle_error(self, request, client_address):
+        import sys
+        ex_type, _, _ = sys.exc_info()
+        if ex_type in (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+            return
+        super().handle_error(request, client_address)
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    def handle(self):
+        try:
+            super().handle()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+            pass
+
     def do_GET(self):
         if self.path == "/" or self.path == "/index.html":
             self.send_response(200)
@@ -620,11 +761,17 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.end_headers()
             with state_lock:
                 data_copy = {k: v for k, v in telemetry_state.items() if k != "latest_jpeg"}
-            self.wfile.write(json.dumps(data_copy).encode("utf-8"))
+            try:
+                self.wfile.write(json.dumps(data_copy).encode("utf-8"))
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+                pass
 
         elif self.path == "/video_feed":
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
             self.end_headers()
             try:
                 while True:
@@ -636,7 +783,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                         self.wfile.write(jpeg_bytes)
                         self.wfile.write(b"\r\n")
                     time.sleep(0.04)
-            except (BrokenPipeError, ConnectionResetError):
+            except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
                 pass
         else:
             self.send_response(404)
@@ -662,10 +809,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
         # Silence standard HTTP access logging to keep console clean
         return
 
+def get_local_ip():
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except Exception:
+        return "127.0.0.1"
+
 def start_web_dashboard(port=5000, source="demo"):
+    local_ip = get_local_ip()
     print("\n" + "="*65)
     print("AUTONOMOUS AI TRAFFIC MANAGEMENT - WEB MISSION CONTROL")
-    print(f"Server URL: http://localhost:{port}")
+    print(f"Local URL:                 http://localhost:{port}")
+    print(f"Network URL (Mobile Phone): http://{local_ip}:{port}")
     print("Press Ctrl+C in this terminal to stop the server.")
     print("="*65 + "\n")
 
